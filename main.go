@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -18,17 +19,21 @@ func main() {
 
 	// Parse flags and remaining arguments
 	flag.Parse()
-	args := flag.Args()
+	// args := flag.Args()
 
-	if len(args) < 1 {
-		fmt.Println("No options specified")
+	if *remove == false && *loss == 0 {
 		fmt.Println("Usage: ./toxipacket <ip_address> [flags]")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
+	if *loss < 0 || *loss > 100 {
+		fmt.Println("Loss needs to be in range 0-100")
+		os.Exit(1)
+	}
+
 	// I think it's a nice to have? Might change later
-	if *ip == "" || *ip == "localhost" {
+	if *ip == "localhost" {
 		*ip = "127.0.0.1"
 	}
 
@@ -41,11 +46,13 @@ func main() {
 	if *remove {
 		err := removeTCRulesFromInterface(iface)
 		if err != nil {
-			fmt.Printf("Error while removing tc rules from interface: %s\n", err)
+			fmt.Printf("Error while removing rules: %s\n", err)
 		}
 	} else {
-		applyTCRules(iface, *ip, *port, *loss)
-
+		err := applyTCRules(iface, *ip, *port, *loss)
+		if err != nil {
+			fmt.Printf("Error while applying rules. %s\n", err)
+		}
 	}
 }
 
@@ -81,41 +88,40 @@ func getInterfaceForIP(ip string) (string, error) {
 }
 
 func applyTCRules(iface, ip string, port int, loss int) error {
-	commands := []string{
-		fmt.Sprintf("tc qdisc add dev %s root handle 1: prio", iface),
-	}
-
-	// Add port-specific filter if a port is specified
-	if port > 0 {
-		commands = append(commands, fmt.Sprintf("tc filter add dev %s protocol ip parent 1: prio 1 u32 match ip dst %s match ip dport %d 0xffff flowid 2:1", iface, ip, port))
-	} else {
-		commands = append(commands, fmt.Sprintf("tc filter add dev %s protocol ip parent 1: prio 1 u32 match ip dst %s flowid 2:1", iface, ip))
-	}
-
-	commands = append(commands, fmt.Sprintf("tc qdisc add dev %s parent 1:1 handle 2: netem loss %d%%", iface, loss))
-
-	for _, cmd := range commands {
-		err := executeCommand("sudo", "sh", "-c", cmd)
-		if err != nil {
-			fmt.Printf("Error executing command: %s\n", err)
-			os.Exit(1)
+	output, err := exec.Command("sudo", "tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "prio").CombinedOutput()
+	if err != nil {
+		if strings.HasPrefix(string(output), "Error: Exclusivity flag on, cannot modify") {
+			return fmt.Errorf("A rule for this ip already exists")
 		}
+		return fmt.Errorf(string(output))
 	}
 
+	// Add filter
+	var filterCmd *exec.Cmd
 	if port > 0 {
-		fmt.Printf("Applied %df%% packet loss to %s:%d on interface %s\n", loss, ip, port, iface)
+		filterCmd = exec.Command("sudo", "tc", "filter", "add", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "1", "u32", "match", "ip", "dst", ip, "match", "ip", "dport", strconv.Itoa(port), "0xffff", "flowid", "2:1")
+	} else {
+		filterCmd = exec.Command("sudo", "tc", "filter", "add", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "1", "u32", "match", "ip", "dst", ip, "flowid", "2:1")
+	}
+	output, err = filterCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(string(output))
+	}
+
+	// Add netem qdisc
+	output, err = exec.Command("sudo", "tc", "qdisc", "add", "dev", iface, "parent", "1:1", "handle", "2:", "netem", "loss", fmt.Sprintf("%d%%", loss)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(string(output))
+	}
+
+	// Print success message
+	if port > 0 {
+		fmt.Printf("Applied %d%% packet loss to %s:%d on interface %s\n", loss, ip, port, iface)
 	} else {
 		fmt.Printf("Applied %d%% packet loss to %s on interface %s\n", loss, ip, iface)
 	}
 
 	return nil
-}
-
-func executeCommand(name string, arg ...string) error {
-	cmd := exec.Command(name, arg...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func removeTCRulesFromInterface(iface string) error {
@@ -126,7 +132,6 @@ func removeTCRulesFromInterface(iface string) error {
 		if strings.HasPrefix(string(output), "Error: Cannot delete qdisc with handle of zero") {
 			return fmt.Errorf("No rules to remove")
 		}
-
 		return fmt.Errorf("%s", string(output))
 	}
 	return nil
