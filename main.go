@@ -16,12 +16,13 @@ func main() {
 	remove := flag.Bool("remove", false, "Remove rules for ip")
 	port := flag.Int("p", 0, "Port to apply rules to")
 	loss := flag.Int("loss", 0, "Packet loss percentage")
+	show := flag.Bool("show", false, "Show active rules")
 
 	// Parse flags and remaining arguments
 	flag.Parse()
 	// args := flag.Args()
 
-	if *remove == false && *loss == 0 {
+	if *remove == false && *loss == 0 && *show == false {
 		fmt.Println("Usage: ./toxipacket <ip_address> [flags]")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -43,17 +44,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *remove {
-		err := removeTCRulesFromInterface(iface)
+	if *show {
+		output, err := getActiveRules(iface)
 		if err != nil {
-			fmt.Printf("Error while removing rules: %s\n", err)
+			fmt.Printf("Error getting active rules. %s\n", err)
+			os.Exit(1)
 		}
+		fmt.Println(output)
 	} else {
-		err := applyTCRules(iface, *ip, *port, *loss)
-		if err != nil {
-			fmt.Printf("Error while applying rules. %s\n", err)
+		if *remove {
+			err := removeTCRulesFromInterface(iface)
+			if err != nil {
+				fmt.Printf("Error while removing rules: %s\n", err)
+				os.Exit(1)
+			}
+		} else {
+			err := applyTCRules(iface, *ip, *port, *loss)
+			if err != nil {
+				fmt.Printf("Error while applying rules. %s\n", err)
+				os.Exit(1)
+			}
 		}
+
 	}
+}
+
+func getActiveRules(iface string) (string, error) {
+	output, err := exec.Command("sudo", "tc", "qdisc", "show", "dev", iface).CombinedOutput()
+	return string(output), err
 }
 
 func getInterfaceForIP(ip string) (string, error) {
