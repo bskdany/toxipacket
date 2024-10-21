@@ -1,71 +1,121 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/urfave/cli/v2"
 )
 
 func main() {
-	// Define flags
-	ip := flag.String("ip", "127.0.0.1", "Target ip")
-	remove := flag.Bool("remove", false, "Remove rules for ip")
-	port := flag.Int("p", 0, "Port to apply rules to")
-	loss := flag.Int("loss", 0, "Packet loss percentage")
-	show := flag.Bool("show", false, "Show active rules")
+	app := &cli.App{
+		Name:  "toxipacket",
+		Usage: "Simulate network inconsistency",
+		Commands: []*cli.Command{
+			{
+				Name:  "add",
+				Usage: "Add a rule to an interface",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "ip",
+						Value: "127.0.0.1",
+						Usage: "Target ip",
+					},
+					&cli.StringFlag{
+						Name:    "port",
+						Aliases: []string{"p"},
+						Usage:   "Target port",
+					},
+					&cli.StringFlag{
+						Name:    "loss",
+						Aliases: []string{"l"},
+						Usage:   "Packet loss to be applied",
+					},
+				},
+				Action: func(context *cli.Context) error {
+					iface, err := getInterfaceForIP(context.String("ip"))
+					if err != nil {
+						return cli.Exit(err, 1)
+					}
 
-	// Parse flags and remaining arguments
-	flag.Parse()
-	// args := flag.Args()
+					err = applyTCRules(iface, context.String("ip"), context.Int("port"), context.Int("loss"))
+					if err != nil {
+						return cli.Exit(err, 1)
+					}
+					return nil
+				},
+			},
+			{
+				Name:    "remove",
+				Aliases: []string{"rm"},
+				Usage:   "Remove a rule ",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "ip",
+						Value: "127.0.0.1",
+						Usage: "Target ip",
+					},
+				},
+				Action: func(context *cli.Context) error {
+					iface, err := getInterfaceForIP(context.String("ip"))
+					if err != nil {
+						return cli.Exit(err, 1)
+					}
 
-	if *remove == false && *loss == 0 && *show == false {
-		fmt.Println("Usage: ./toxipacket <ip_address> [flags]")
-		flag.PrintDefaults()
-		os.Exit(1)
+					err = removeTCRulesFromInterface(iface)
+					if err != nil {
+						return cli.Exit(err, 1)
+					}
+					return nil
+				},
+			},
+			{
+				Name:  "show",
+				Usage: "Show the currently applied rules",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "all",
+						Usage: "Show applied rules for all interfaces",
+						Action: func(context *cli.Context) error {
+							iface, err := getInterfaceForIP(context.String("ip"))
+							if err != nil {
+								return cli.Exit(err, 1)
+							}
+
+							output, err := getActiveRules(iface)
+							if err != nil {
+								return cli.Exit(err, 1)
+							}
+							fmt.Println(output)
+							return nil
+						},
+					},
+				},
+				Action: func(context *cli.Context) error {
+					iface, err := getInterfaceForIP(context.String("ip"))
+					if err != nil {
+						return cli.Exit(err, 1)
+					}
+
+					output, err := getActiveRules(iface)
+					if err != nil {
+						return cli.Exit(err, 1)
+					}
+					fmt.Println(output)
+					return nil
+				},
+			},
+		},
 	}
 
-	if *loss < 0 || *loss > 100 {
-		fmt.Println("Loss needs to be in range 0-100")
-		os.Exit(1)
-	}
-
-	// I think it's a nice to have? Might change later
-	if *ip == "localhost" {
-		*ip = "127.0.0.1"
-	}
-
-	iface, err := getInterfaceForIP(*ip)
+	err := app.Run(os.Args)
 	if err != nil {
-		fmt.Printf("Error determining network interface: %s\n", err)
-		os.Exit(1)
-	}
-
-	if *show {
-		output, err := getActiveRules(iface)
-		if err != nil {
-			fmt.Printf("Error getting active rules. %s\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(output)
-	} else {
-		if *remove {
-			err := removeTCRulesFromInterface(iface)
-			if err != nil {
-				fmt.Printf("Error while removing rules: %s\n", err)
-				os.Exit(1)
-			}
-		} else {
-			err := applyTCRules(iface, *ip, *port, *loss)
-			if err != nil {
-				fmt.Printf("Error while applying rules. %s\n", err)
-				os.Exit(1)
-			}
-		}
-
+		log.Fatal(err)
 	}
 }
 
@@ -76,7 +126,7 @@ func getActiveRules(iface string) (string, error) {
 
 func getInterfaceForIP(ip string) (string, error) {
 	// Check if the IP is localhost
-	if ip == "127.0.0.1" || ip == "::1" {
+	if ip == "127.0.0.1" {
 		return "lo", nil
 	}
 
@@ -106,6 +156,10 @@ func getInterfaceForIP(ip string) (string, error) {
 }
 
 func applyTCRules(iface, ip string, port int, loss int) error {
+	if loss <= 0 || loss > 100 {
+		return fmt.Errorf("Loss needs to be in range 0-100")
+	}
+
 	output, err := exec.Command("sudo", "tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "prio").CombinedOutput()
 	if err != nil {
 		if strings.HasPrefix(string(output), "Error: Exclusivity flag on, cannot modify") {
