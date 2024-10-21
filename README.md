@@ -1,6 +1,14 @@
 ## Toxipacket
 Simulate network instability the easy way. It is a wrapper around the tc Linux utility, therefore the latter is the only supported platform
 
+## Installation
+The only dependency it `iproute2`
+```
+sudo apt install iproute2
+```
+
+Then either compile the app yourself with go or grab the latest binary from the release section
+
 ## How to use
 ```
 NAME:
