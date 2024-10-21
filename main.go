@@ -13,18 +13,6 @@ import (
 )
 
 func main() {
-	cli.AppHelpTemplate = `NAME: {{.Name}} - {{.Usage}}
-
-USAGE:
-  toxipacket command [arguments...]
-
-COMMANDS: {{range .Commands}}{{if not .HideHelp}}
-  {{.Name}}{{with .Aliases}} ({{join . ", "}}){{end}}: {{.Usage}}{{if .Flags}}{{range .Flags}}
-  	--{{.Name}}{{if .Aliases}}, -{{index .Aliases 0}}{{end}}: {{.Usage}}{{end}}{{end}}{{ "\n" }}{{end}}{{end}}
-GLOBAL OPTIONS:
-  {{range .VisibleFlags}}{{.}}{{end}}
-`
-
 	app := &cli.App{
 		Name:  "toxipacket",
 		Usage: "Simulate network inconsistency",
