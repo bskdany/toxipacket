@@ -89,23 +89,11 @@ GLOBAL OPTIONS:
 			{
 				Name:  "show",
 				Usage: "Show the currently applied rules",
-				Subcommands: []*cli.Command{
-					{
-						Name:  "all",
-						Usage: "Show applied rules for all interfaces",
-						Action: func(context *cli.Context) error {
-							iface, err := getInterfaceForIP(context.String("ip"))
-							if err != nil {
-								return cli.Exit(err, 1)
-							}
-
-							output, err := getActiveRules(iface)
-							if err != nil {
-								return cli.Exit(err, 1)
-							}
-							fmt.Println(output)
-							return nil
-						},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "ip",
+						Value: "127.0.0.1",
+						Usage: "Target ip",
 					},
 				},
 				Action: func(context *cli.Context) error {
